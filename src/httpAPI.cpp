@@ -530,31 +530,120 @@ HTTP_RESPONSE_CONST std::shared_ptr<httpserver::http_response> PlayerResource::r
 
         if (endsWith(url, "/start")) {
             replaceEnd(url, "/start", "");
-            LogDebug(VB_HTTP, "API - Starting sequence '%s'\n", url.c_str());
+            if ((Player::INSTANCE.GetStatus() == FPP_STATUS_IDLE) &&
+                (!sequence->IsSequenceRunning())) {
+                int startSecond = 0;
+                if (data.isMember("startSecond")) {
+                    startSecond = data["startSecond"].asInt();
+                }
+                if (sequence->OpenSequenceFile(url, 0, startSecond) > 0) {
+                    sequence->StartSequence();
+                    // Check for associated media
+                    std::string mediaFile = url;
+                    std::string fullMediaPath;
+                    if (FileExists(FPP_DIR_MUSIC("/" + mediaFile + ".mp3"))) {
+                        fullMediaPath = FPP_DIR_MUSIC("/" + mediaFile + ".mp3");
+                    } else if (FileExists(FPP_DIR_MUSIC("/" + mediaFile + ".wav"))) {
+                        fullMediaPath = FPP_DIR_MUSIC("/" + mediaFile + ".wav");
+                    }
+                    if (!fullMediaPath.empty()) {
+                        OpenMediaOutput(fullMediaPath);
+                        if (mediaOutput) {
+                            mediaOutput->Start(startSecond * 1000);
+                        }
+                    }
+                    SetOKResult(result, "Sequence started");
+                } else {
+                    result["Status"] = "ERROR";
+                    result["Message"] = "Failed to open sequence";
+                }
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "Player is not idle or sequence already running";
+            }
         } else if (endsWith(url, "/stop")) {
             replaceEnd(url, "/stop", "");
-            LogDebug(VB_HTTP, "API - Stopping sequence '%s'\n", url.c_str());
+            if (sequence->IsSequenceRunning(url.c_str())) {
+                sequence->CloseSequenceFile();
+                CloseMediaOutput();
+                SetOKResult(result, "Sequence stopped");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "Sequence not running";
+            }
         } else if (endsWith(url, "/pause")) {
             replaceEnd(url, "/pause", "");
-            LogDebug(VB_HTTP, "API - (un)Pausing sequence '%s'\n", url.c_str());
+            if (sequence->IsSequenceRunning()) {
+                sequence->ToggleSequencePause();
+                SetOKResult(result, "Sequence pause toggled");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         } else if (endsWith(url, "/pause/0")) {
-            LogDebug(VB_HTTP, "API - UnPausing sequence '%s'\n", url.c_str());
+            if (sequence->IsSequenceRunning()) {
+                if (sequence->SequenceIsPaused()) {
+                    sequence->ToggleSequencePause();
+                }
+                SetOKResult(result, "Sequence unpaused");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         } else if (endsWith(url, "/pause/1")) {
-            LogDebug(VB_HTTP, "API - Pausing sequence '%s'\n", url.c_str());
+            if (sequence->IsSequenceRunning()) {
+                if (!sequence->SequenceIsPaused()) {
+                    sequence->ToggleSequencePause();
+                }
+                SetOKResult(result, "Sequence paused");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         } else if (endsWith(url, "/step")) {
             replaceEnd(url, "/step", "");
-            LogDebug(VB_HTTP, "API - Stepping sequence '%s' by 1 frame\n", url.c_str());
+            if (sequence->IsSequenceRunning()) {
+                sequence->SingleStepSequence();
+                SetOKResult(result, "Sequence stepped forward");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         } else if (endsWith(url, "/back")) {
             replaceEnd(url, "/back", "");
-            LogDebug(VB_HTTP, "API - Stepping sequence '%s' BACK by 1 frame\n", url.c_str());
+            if (sequence->IsSequenceRunning()) {
+                sequence->SingleStepSequenceBack();
+                SetOKResult(result, "Sequence stepped back");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         } else if (url.find("/step/") != std::string::npos) {
             std::string sequenceName = url.substr(0, url.find("/step/"));
             int frames = atoi(url.substr(url.find("/step/") + 6).c_str());
-            LogDebug(VB_HTTP, "API - Stepping sequence '%s' by %d frame(s)\n", sequenceName.c_str(), frames);
+            if (sequence->IsSequenceRunning()) {
+                int currentFrame = sequence->m_seqMSElapsed / sequence->GetSeqStepTime();
+                int newFrame = currentFrame + frames;
+                if (newFrame < 0) newFrame = 0;
+                sequence->SeekSequenceFile(newFrame);
+                SetOKResult(result, "Sequence stepped by " + std::to_string(frames) + " frames");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         } else if (url.find("/back/") != std::string::npos) {
             std::string sequenceName = url.substr(0, url.find("/back/"));
             int frames = atoi(url.substr(url.find("/back/") + 6).c_str());
-            LogDebug(VB_HTTP, "API - Stepping sequence '%s' BACK by %d frame(s)\n", sequenceName.c_str(), frames);
+            if (sequence->IsSequenceRunning()) {
+                int currentFrame = sequence->m_seqMSElapsed / sequence->GetSeqStepTime();
+                int newFrame = currentFrame - frames;
+                if (newFrame < 0) newFrame = 0;
+                sequence->SeekSequenceFile(newFrame);
+                SetOKResult(result, "Sequence stepped back by " + std::to_string(frames) + " frames");
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "No sequence running";
+            }
         }
     } else if (url == "settings/reload") {
         LogDebug(VB_HTTP, "API - Reloading all settings\n");
