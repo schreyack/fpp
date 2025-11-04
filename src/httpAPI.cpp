@@ -428,6 +428,54 @@ HTTP_RESPONSE_CONST std::shared_ptr<httpserver::http_response> PlayerResource::r
             result["respCode"] = 400;
             result["Message"] = "Mqtt not Initialized";
         }
+    } else if (url.find("sequences/") == 0) {
+        replaceStart(url, "sequences/");
+        if (endsWith(url, "/start")) {
+            replaceEnd(url, "/start");
+            std::string query = std::string(req.get_querystring());
+            int startSecond = 0;
+            if (query.find("startSecond=") != std::string::npos) {
+                std::string val = query.substr(query.find("startSecond=") + 12);
+                size_t amp = val.find('&');
+                if (amp != std::string::npos) val = val.substr(0, amp);
+                startSecond = atoi(val.c_str());
+            }
+            if ((Player::INSTANCE.GetStatus() == FPP_STATUS_IDLE) &&
+                (!sequence->IsSequenceRunning())) {
+                if (sequence->OpenSequenceFile(url, 0, startSecond) > 0) {
+                    sequence->StartSequence();
+                    // Check for associated media
+                    std::string mediaFile = url;
+                    if (mediaFile.find(".fseq") != std::string::npos) {
+                        mediaFile = mediaFile.substr(0, mediaFile.find(".fseq"));
+                    }
+                    std::string fullMediaPath;
+                    if (FileExists(FPP_DIR_MUSIC("/" + mediaFile + ".mp3"))) {
+                        fullMediaPath = FPP_DIR_MUSIC("/" + mediaFile + ".mp3");
+                    } else if (FileExists(FPP_DIR_MUSIC("/" + mediaFile + ".wav"))) {
+                        fullMediaPath = FPP_DIR_MUSIC("/" + mediaFile + ".wav");
+                    }
+                    if (!fullMediaPath.empty()) {
+                        OpenMediaOutput(fullMediaPath);
+                        if (mediaOutput) {
+                            mediaOutput->Start(startSecond * 1000);
+                        }
+                    }
+                    result["Status"] = "OK";
+                    result["Message"] = "Sequence started";
+                } else {
+                    result["Status"] = "ERROR";
+                    result["Message"] = "Failed to open sequence";
+                }
+            } else {
+                result["Status"] = "ERROR";
+                result["Message"] = "Player is not idle or sequence already running";
+            }
+        } else {
+            result["Status"] = "ERROR";
+            result["respCode"] = 404;
+            result["Message"] = "Unknown sequences endpoint";
+        }
     } else {
         LogErr(VB_HTTP, "API - Error unknown GET request: %s\n", url.c_str());
 
